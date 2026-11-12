@@ -266,6 +266,12 @@
   .board-card .c{ color:var(--muted); font-size:11px; }
   .board-card.destaque{ background:var(--gold-bg); border-color:var(--gold-line); }
   .board-empty{ color:var(--muted); font-size:11.5px; text-align:center; padding:10px 0; }
+  .day-clear{
+    display:block; width:100%; margin-top:4px; padding:5px 0; border-radius:7px; cursor:pointer;
+    background:transparent; border:1px dashed var(--danger); color:var(--danger);
+    font-size:11px; font-weight:700;
+  }
+  .day-clear:hover{ background:var(--danger); border-style:solid; color:#fff; }
 
   .group-head{
     display:flex; align-items:baseline; justify-content:space-between; gap:8px;
@@ -843,6 +849,21 @@
     renderAll();
   }
 
+  // Tira um dia da semana das lojas indicadas (só as que aparecem no card, respeitando os filtros).
+  // Mexe só na tela; o supervisor grava depois pelo botão "Gravar agenda".
+  function clearDay(sup, code, chaves){
+    if (!assignments[sup]) return;
+    chaves.forEach(function(chave){
+      var days = assignments[sup][chave];
+      if (!days) return;
+      days = days.filter(function(d){ return d !== code; });
+      if (days.length) assignments[sup][chave] = days;
+      else delete assignments[sup][chave];
+    });
+    saveAssignments();
+    renderAll();
+  }
+
   function showConfirm(message, onConfirm){
     var overlay = document.getElementById("modalOverlay");
     document.getElementById("modalMessage").textContent = message;
@@ -1024,14 +1045,31 @@
     stores.forEach(function(s){
       getDays(currentSup, s.chave).forEach(function(d){ byDay[d].push(s); });
     });
+    var locked = isLocked(currentSup);
+    var filtrado = stores.length !== storesForSupervisor(currentSup).length;
     document.getElementById("weekSummary").innerHTML = '<div class="board">' + DAYS.map(function(d){
       var list = byDay[d.code];
       return '<div class="board-col"><h4>'+d.label+'<span class="n">'+list.length+'</span></h4>' +
         (list.length ? list.map(function(s){
           return '<div class="board-card'+(s.destaque?" destaque":"")+'"><div class="l">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+(s.promotores.length>1?' <span title="Loja com mais de um promotor">👥</span>':"")+'</div><div class="c">'+escapeHtml(s.cidade)+' · '+escapeHtml(s.promotores.join(" | "))+'</div></div>';
         }).join("") : '<div class="board-empty">Sem visitas</div>') +
+        (list.length && !locked ? '<button class="day-clear" data-day="'+d.code+'" title="Desmarca '+d.label+' das lojas deste card">× Limpar '+d.label+'</button>' : '') +
       '</div>';
     }).join("") + '</div>';
+
+    Array.prototype.forEach.call(document.querySelectorAll("#weekSummary .day-clear"), function(btn){
+      btn.addEventListener("click", function(){
+        var sup = currentSup;
+        var code = btn.getAttribute("data-day");
+        var label = DAYS.filter(function(x){ return x.code === code; })[0].label;
+        var chaves = byDay[code].map(function(s){ return s.chave; });
+        var n = chaves.length;
+        showConfirm("Desmarcar "+label+" de "+n+" loja"+(n===1?"":"s")+(filtrado ? " (só as que aparecem com o filtro atual)" : "")+
+          "? Os outros dias continuam marcados. Depois clique em Gravar agenda para enviar ao gestor.", function(){
+          clearDay(sup, code, chaves);
+        });
+      });
+    });
   }
 
   function renderPdvList(){
