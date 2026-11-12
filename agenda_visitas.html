@@ -219,6 +219,25 @@
   }
   .day-btn:hover{ border-color:var(--accent); color:var(--ink); }
   .day-btn.on{ background:var(--daysel-bg); border-color:var(--daysel-bg); color:var(--daysel-ink); font-weight:800; }
+  /* bolinha rosa = dia em que o promotor visita a loja (colunas SEG..SÁB do roteiro) */
+  .day-btn{ position:relative; }
+  .day-btn.promo::after{
+    content:""; position:absolute; bottom:3px; left:50%; width:5px; height:5px; margin-left:-2.5px;
+    border-radius:50%; background:var(--pink);
+  }
+  .day-btn.on.promo::after{ background:#fff; }
+  .multi-badge{
+    display:inline-block; font-size:10.5px; font-weight:800; color:#fff; background:var(--pink);
+    padding:2px 8px; border-radius:99px; margin-left:6px; vertical-align:1px; letter-spacing:.02em; white-space:nowrap;
+  }
+  .store-row .promos{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .store-row .promos .p{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .store-row .promos .p b{ color:var(--ink); font-weight:600; }
+  .store-row .promos .p .dias{ color:var(--pink); font-weight:700; }
+  .store-row .promos .p .orig{ font-size:10.5px; border:1px solid var(--line); border-radius:4px; padding:0 4px; margin-left:4px; }
+  .store-row.multi{ border-left:4px solid var(--pink); }
+  .legend{ font-size:11.5px; color:var(--muted); margin:0 0 14px; display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; }
+  .legend .dot{ display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--pink); margin-right:5px; vertical-align:1px; }
   .day-btn:disabled{ opacity:.5; cursor:not-allowed; }
   .day-btn:disabled:hover{ border-color:var(--line); color:var(--muted); }
   .day-btn.on:disabled{ opacity:.85; }
@@ -348,6 +367,7 @@
       <div class="stat-row"><span>Promotores na carteira</span><span class="n" id="statPromoTotal">0</span></div>
       <div class="stat-row"><span>Cobertos</span><span class="n" id="statPromoDone">0</span></div>
       <div class="bar-row"><div class="bar"><i id="statPromoBar" style="width:0%"></i></div><span class="bar-pct" id="statPromoPct">0%</span></div>
+      <div class="stat-row" style="margin-top:4px;"><span>👥 Lojas com 2+ promotores</span><span class="n" id="statMulti">0</span></div>
     </div>
 
     <div>
@@ -397,7 +417,14 @@
 
     <section class="panel">
       <span class="tag">PDVs da carteira</span>
-      <div class="panel-body"><div id="pdvList"></div></div>
+      <div class="panel-body">
+        <div class="legend">
+          <span><span class="dot"></span>bolinha no botão = dia em que o promotor visita a loja</span>
+          <span><span class="multi-badge" style="margin-left:0;">👥 2 promotores</span> loja atendida por mais de um promotor</span>
+          <span><span class="destaque-star">★</span>Golden Store</span>
+        </div>
+        <div id="pdvList"></div>
+      </div>
     </section>
   </main>
 </div>
@@ -475,6 +502,11 @@
     var iRota = findCol(header, ["ROTA"]);
     var iDestaque = findCol(header, ["DESTAQUE"]);
     var iInco = findCol(header, ["INCO"]);
+    var iDiasProm = findCol(header, ["DIAS_PROMOTOR"]);
+    var iOrigem = findCol(header, ["ORIGEM"]);
+    var labelToCode = {};
+    DAYS.forEach(function(d){ labelToCode[d.label.toUpperCase()] = d.code; labelToCode[d.code] = d.code; });
+    labelToCode["SAB"] = "SAB";
 
     if (iSupervisor === -1 || iLoja === -1){ return null; }
 
@@ -495,6 +527,8 @@
         endereco: iEndereco>-1 ? norm(cols[iEndereco]) : "",
         cidade: iCidade>-1 ? norm(cols[iCidade]) : "",
         rota: iRota>-1 ? norm(cols[iRota]) : "",
+        origem: iOrigem>-1 ? norm(cols[iOrigem]) : "",
+        promoDays: (iDiasProm>-1 ? norm(cols[iDiasProm]) : "").split(/[\s,]+/).map(function(x){ return labelToCode[x.toUpperCase()]; }).filter(Boolean),
         destaque: (iDestaque>-1 && norm(cols[iDestaque]).toUpperCase() === "SIM") ||
                   (iInco>-1 && norm(cols[iInco]).toUpperCase().indexOf("GOLDEN") > -1)
       });
@@ -701,10 +735,15 @@
       var r = rows[i];
       if (r.supervisor !== sup) continue;
       if (!map.has(r.chave)){
-        map.set(r.chave, {chave:r.chave, cdd:r.cdd, codPdv:r.codPdv, loja:r.loja, endereco:r.endereco, cidade:r.cidade, rota:r.rota, destaque:r.destaque, promotores:[r.promotor]});
-      } else if (r.promotor && map.get(r.chave).promotores.indexOf(r.promotor) === -1){
-        map.get(r.chave).promotores.push(r.promotor);
+        map.set(r.chave, {chave:r.chave, cdd:r.cdd, codPdv:r.codPdv, loja:r.loja, endereco:r.endereco, cidade:r.cidade, rota:r.rota, destaque:r.destaque, promotores:[], promoDet:[], promoDays:[]});
       }
+      var st = map.get(r.chave);
+      if (r.destaque) st.destaque = true;
+      if (r.promotor && st.promotores.indexOf(r.promotor) === -1){
+        st.promotores.push(r.promotor);
+        st.promoDet.push({ nome: r.promotor, dias: r.promoDays, origem: r.origem });
+      }
+      r.promoDays.forEach(function(d){ if (st.promoDays.indexOf(d) === -1) st.promoDays.push(d); });
     }
     return Array.from(map.values()).sort(function(a,b){
       if (a.cdd !== b.cdd) return a.cdd.localeCompare(b.cdd);
@@ -829,6 +868,7 @@
     var promoPct = promoTotal ? Math.round(promoDone/promoTotal*100) : 0;
     document.getElementById("statPromoBar").style.width = promoPct + "%";
     document.getElementById("statPromoPct").textContent = promoPct + "%";
+    document.getElementById("statMulti").textContent = stores.filter(function(s){ return s.promotores.length > 1; }).length;
 
     var destaqueStores = stores.filter(function(s){ return s.destaque; });
     var destaqueTotal = destaqueStores.length;
@@ -916,12 +956,29 @@
     document.getElementById("supEyebrow").textContent = stores.length + " PDV" + (stores.length===1?"":"s") + " na carteira";
   }
 
-  function dayButtonsHtml(chave){
+  function dayButtonsHtml(s){
+    var chave = s.chave;
     var active = getDays(currentSup, chave);
     var locked = isLocked(currentSup);
     return '<div class="days">' + DAYS.map(function(d){
       var on = active.indexOf(d.code) > -1;
-      return '<button class="day-btn'+(on?" on":"")+'"'+(locked?" disabled":"")+' data-chave="'+escapeAttr(chave)+'" data-day="'+d.code+'" title="'+d.label+'">'+d.label.slice(0,3)+'</button>';
+      var promo = s.promoDays.indexOf(d.code) > -1;
+      var quem = promo ? s.promoDet.filter(function(p){ return p.dias.indexOf(d.code) > -1; }).map(function(p){ return p.nome; }).join(", ") : "";
+      var title = d.label + (promo ? " — promotor na loja: " + quem : "");
+      return '<button class="day-btn'+(on?" on":"")+(promo?" promo":"")+'"'+(locked?" disabled":"")+' data-chave="'+escapeAttr(chave)+'" data-day="'+d.code+'" title="'+escapeAttr(title)+'">'+d.label.slice(0,3)+'</button>';
+    }).join("") + '</div>';
+  }
+
+  function diasLabel(codes){
+    return DAYS.filter(function(d){ return codes.indexOf(d.code) > -1; }).map(function(d){ return d.label; }).join(", ");
+  }
+
+  function promotoresHtml(s){
+    if (!s.promoDet.length) return "";
+    return '<div class="promos">' + s.promoDet.map(function(p){
+      var dias = diasLabel(p.dias);
+      var orig = (s.promoDet.length > 1 && p.origem && p.origem !== "Regular") ? '<span class="orig">'+escapeHtml(p.origem)+'</span>' : "";
+      return '<div class="p">Promotor: <b>'+escapeHtml(p.nome)+'</b>'+(dias ? ' · <span class="dias">'+escapeHtml(dias)+'</span>' : ' · <span>sem dia no roteiro</span>')+orig+'</div>';
     }).join("") + '</div>';
   }
 
@@ -968,7 +1025,7 @@
       var list = byDay[d.code];
       return '<div class="board-col"><h4>'+d.label+'<span class="n">'+list.length+'</span></h4>' +
         (list.length ? list.map(function(s){
-          return '<div class="board-card'+(s.destaque?" destaque":"")+'"><div class="l">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+'</div><div class="c">'+escapeHtml(s.cidade)+' · '+escapeHtml(s.promotores.join(" | "))+'</div></div>';
+          return '<div class="board-card'+(s.destaque?" destaque":"")+'"><div class="l">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+(s.promotores.length>1?' <span title="Loja com mais de um promotor">👥</span>':"")+'</div><div class="c">'+escapeHtml(s.cidade)+' · '+escapeHtml(s.promotores.join(" | "))+'</div></div>';
         }).join("") : '<div class="board-empty">Sem visitas</div>') +
       '</div>';
     }).join("") + '</div>';
@@ -992,13 +1049,16 @@
         list.map(function(s){
           var hasDays = getDays(currentSup, s.chave).length > 0;
           var locked = isLocked(currentSup);
-          return '<div class="store-row'+(s.destaque?" destaque":"")+'">' +
+          var multi = s.promotores.length > 1;
+          return '<div class="store-row'+(s.destaque?" destaque":"")+(multi?" multi":"")+'">' +
             (hasDays && !locked ? '<button class="remove-x" data-chave="'+escapeAttr(s.chave)+'" title="Remover esta loja da semana">×</button>' : "") +
             '<div class="info">' +
-              '<div class="loja">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+'</div>' +
-              '<div class="meta">'+escapeHtml(s.cidade)+'<span class="sep">·</span>'+escapeHtml(s.promotores.join(" | "))+'</div>' +
+              '<div class="loja">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+
+                (multi ? '<span class="multi-badge">👥 '+s.promotores.length+' promotores</span>' : "")+'</div>' +
+              '<div class="meta">'+escapeHtml(s.cidade)+(s.endereco && s.loja.indexOf(s.endereco) === -1 ? '<span class="sep">·</span>'+escapeHtml(s.endereco) : "")+'</div>' +
+              promotoresHtml(s) +
             '</div>' +
-            dayButtonsHtml(s.chave) +
+            dayButtonsHtml(s) +
           '</div>';
         }).join("");
     }).join("");
