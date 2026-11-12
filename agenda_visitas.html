@@ -381,8 +381,18 @@
     </div>
 
     <div>
+      <label for="bandeiraFilterSel" class="eyebrow" style="display:block;margin-bottom:4px;">Bandeira</label>
+      <select class="filter-select" id="bandeiraFilterSel"></select>
+    </div>
+
+    <div>
       <label for="cidadeFilterSel" class="eyebrow" style="display:block;margin-bottom:4px;">Cidade</label>
       <select class="filter-select" id="cidadeFilterSel"></select>
+    </div>
+
+    <div>
+      <label for="bairroFilterSel" class="eyebrow" style="display:block;margin-bottom:4px;">Bairro</label>
+      <select class="filter-select" id="bairroFilterSel"></select>
     </div>
 
     <div>
@@ -468,8 +478,18 @@
   var savedState = {}; // { [supervisor]: { savedAt: 1234567890, snapshot: "{...}" } }
   var currentSup = null;
   var cddFilter = "TODOS";
-  var cidadeFilter = "TODAS";
-  var promotorFilter = "TODOS";
+  // Filtros da barra lateral em cascata: Regional (chips) -> Bandeira -> Cidade -> Bairro -> Promotor.
+  // "" = todos. Cada lista só mostra opções compatíveis com os filtros ACIMA dela.
+  var FILTER_CHAIN = [
+    { key:"bandeira", sel:"bandeiraFilterSel", all:"Todas", get:function(s){ return [s.bandeira]; } },
+    { key:"cidade",   sel:"cidadeFilterSel",   all:"Todas", get:function(s){ return [s.cidade]; } },
+    { key:"bairro",   sel:"bairroFilterSel",   all:"Todos", get:function(s){ return [s.bairro]; } },
+    { key:"promotor", sel:"promotorFilterSel", all:"Todos", get:function(s){ return s.promotores; } }
+  ];
+  var filters = { bandeira:"", cidade:"", bairro:"", promotor:"" };
+  function resetFilters(fromIdx){
+    FILTER_CHAIN.forEach(function(f, i){ if (i >= (fromIdx||0)) filters[f.key] = ""; });
+  }
 
   function norm(s){ return (s||"").toString().trim(); }
 
@@ -499,6 +519,8 @@
       }
     }
     var iCidade = findCol(header, ["CIDADE"]);
+    var iBandeira = findCol(header, ["BANDEIRA"]);
+    var iBairro = findCol(header, ["BAIRRO"]);
     var iRota = findCol(header, ["ROTA"]);
     var iDestaque = findCol(header, ["DESTAQUE"]);
     var iInco = findCol(header, ["INCO"]);
@@ -526,6 +548,8 @@
         loja: loja,
         endereco: iEndereco>-1 ? norm(cols[iEndereco]) : "",
         cidade: iCidade>-1 ? norm(cols[iCidade]) : "",
+        bandeira: (iBandeira>-1 ? norm(cols[iBandeira]) : "") || "SEM BANDEIRA",
+        bairro: (iBairro>-1 ? norm(cols[iBairro]) : "") || "SEM BAIRRO",
         rota: iRota>-1 ? norm(cols[iRota]) : "",
         origem: iOrigem>-1 ? norm(cols[iOrigem]) : "",
         promoDays: (iDiasProm>-1 ? norm(cols[iDiasProm]) : "").split(/[\s,]+/).map(function(x){ return labelToCode[x.toUpperCase()]; }).filter(Boolean),
@@ -735,7 +759,7 @@
       var r = rows[i];
       if (r.supervisor !== sup) continue;
       if (!map.has(r.chave)){
-        map.set(r.chave, {chave:r.chave, cdd:r.cdd, codPdv:r.codPdv, loja:r.loja, endereco:r.endereco, cidade:r.cidade, rota:r.rota, destaque:r.destaque, promotores:[], promoDet:[], promoDays:[]});
+        map.set(r.chave, {chave:r.chave, cdd:r.cdd, codPdv:r.codPdv, loja:r.loja, endereco:r.endereco, cidade:r.cidade, bandeira:r.bandeira, bairro:r.bairro, rota:r.rota, destaque:r.destaque, promotores:[], promoDet:[], promoDays:[]});
       }
       var st = map.get(r.chave);
       if (r.destaque) st.destaque = true;
@@ -764,31 +788,36 @@
     return Array.from(s).sort();
   }
 
-  function cidadesForSupervisor(sup, cdd){
-    var s = new Set();
-    storesForSupervisor(sup).forEach(function(st){
-      if (cdd !== "TODOS" && st.cdd !== cdd) return;
-      s.add(st.cidade);
-    });
-    return Array.from(s).sort();
-  }
-
-  function promotoresForSupervisor(sup, cdd, cidade){
-    var s = new Set();
-    storesForSupervisor(sup).forEach(function(st){
-      if (cdd !== "TODOS" && st.cdd !== cdd) return;
-      if (cidade !== "TODAS" && st.cidade !== cidade) return;
-      st.promotores.forEach(function(p){ if (p) s.add(p); });
-    });
-    return Array.from(s).sort();
+  // loja passa pelo filtro de regional e pelos n primeiros filtros da cascata
+  function matchUpTo(s, n){
+    if (cddFilter !== "TODOS" && s.cdd !== cddFilter) return false;
+    for (var i=0; i<n; i++){
+      var f = FILTER_CHAIN[i], v = filters[f.key];
+      if (v && f.get(s).indexOf(v) === -1) return false;
+    }
+    return true;
   }
 
   function applyFilters(stores){
-    return stores.filter(function(s){
-      if (cddFilter !== "TODOS" && s.cdd !== cddFilter) return false;
-      if (cidadeFilter !== "TODAS" && s.cidade !== cidadeFilter) return false;
-      if (promotorFilter !== "TODOS" && s.promotores.indexOf(promotorFilter) === -1) return false;
-      return true;
+    return stores.filter(function(s){ return matchUpTo(s, FILTER_CHAIN.length); });
+  }
+
+  function renderFilterSelects(stores){
+    FILTER_CHAIN.forEach(function(f, i){
+      var base = stores.filter(function(s){ return matchUpTo(s, i); });
+      var counts = {};
+      base.forEach(function(s){ f.get(s).forEach(function(v){ if (v) counts[v] = (counts[v]||0) + 1; }); });
+      var values = Object.keys(counts).sort(function(a,b){ return a.localeCompare(b); });
+      if (filters[f.key] && !counts[filters[f.key]]) filters[f.key] = "";
+      var sel = document.getElementById(f.sel);
+      sel.innerHTML = '<option value="">'+f.all+' ('+base.length+')</option>' +
+        values.map(function(v){ return '<option value="'+escapeAttr(v)+'">'+escapeHtml(v)+' ('+counts[v]+')</option>'; }).join("");
+      sel.value = filters[f.key];
+      sel.onchange = function(){
+        filters[f.key] = sel.value;
+        resetFilters(i + 1);
+        renderAll();
+      };
     });
   }
 
@@ -879,22 +908,7 @@
     document.getElementById("statDestaqueBar").style.width = destaquePct + "%";
     document.getElementById("statDestaquePct").textContent = destaquePct + "%";
 
-    var cidadeSel = document.getElementById("cidadeFilterSel");
-    var cidades = cidadesForSupervisor(currentSup, cddFilter);
-    cidadeSel.innerHTML = '<option value="TODAS">Todas (' + stores.filter(function(s){ return cddFilter==="TODOS" || s.cdd===cddFilter; }).length + ')</option>' +
-      cidades.map(function(c){
-        var n = stores.filter(function(s){ return (cddFilter==="TODOS"||s.cdd===cddFilter) && s.cidade===c; }).length;
-        return '<option value="'+escapeAttr(c)+'">'+escapeHtml(c)+' ('+n+')</option>';
-      }).join("");
-    if (cidades.indexOf(cidadeFilter) === -1) cidadeFilter = "TODAS";
-    cidadeSel.value = cidadeFilter;
-
-    var promotorSel = document.getElementById("promotorFilterSel");
-    var promotores = promotoresForSupervisor(currentSup, cddFilter, cidadeFilter);
-    promotorSel.innerHTML = '<option value="TODOS">Todos (' + promotores.length + ')</option>' +
-      promotores.map(function(p){ return '<option value="'+escapeAttr(p)+'">'+escapeHtml(p)+'</option>'; }).join("");
-    if (promotores.indexOf(promotorFilter) === -1) promotorFilter = "TODOS";
-    promotorSel.value = promotorFilter;
+    renderFilterSelects(stores);
 
     var ready = done > 0;
     document.getElementById("downloadBtn").disabled = !ready;
@@ -933,21 +947,10 @@
     Array.prototype.forEach.call(document.querySelectorAll(".chip-filter"), function(el){
       el.addEventListener("click", function(){
         cddFilter = el.getAttribute("data-cdd");
-        cidadeFilter = "TODAS";
-        promotorFilter = "TODOS";
+        resetFilters(0);
         renderAll();
       });
     });
-
-    cidadeSel.onchange = function(){
-      cidadeFilter = cidadeSel.value;
-      promotorFilter = "TODOS";
-      renderAll();
-    };
-    promotorSel.onchange = function(){
-      promotorFilter = promotorSel.value;
-      renderAll();
-    };
   }
 
   function renderTopbar(){
@@ -1055,7 +1058,7 @@
             '<div class="info">' +
               '<div class="loja">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+
                 (multi ? '<span class="multi-badge">👥 '+s.promotores.length+' promotores</span>' : "")+'</div>' +
-              '<div class="meta">'+escapeHtml(s.cidade)+(s.endereco && s.loja.indexOf(s.endereco) === -1 ? '<span class="sep">·</span>'+escapeHtml(s.endereco) : "")+'</div>' +
+              '<div class="meta">'+escapeHtml(s.cidade)+(s.bairro && s.bairro !== "SEM BAIRRO" ? '<span class="sep">·</span>'+escapeHtml(s.bairro) : "")+(s.endereco && s.loja.indexOf(s.endereco) === -1 ? '<span class="sep">·</span>'+escapeHtml(s.endereco) : "")+'</div>' +
               promotoresHtml(s) +
             '</div>' +
             dayButtonsHtml(s) +
@@ -1250,7 +1253,7 @@
   function initApp(){
     document.getElementById("supSelect").addEventListener("change", function(e){
       currentSup = e.target.value;
-      cddFilter = "TODOS"; cidadeFilter = "TODAS"; promotorFilter = "TODOS";
+      cddFilter = "TODOS"; resetFilters(0);
       renderAll();
       syncFromRemoteAndRender(currentSup);
     });
