@@ -190,6 +190,7 @@
   var roster = {}; // { sup: { pdvs:[...], promotores:{} } }
   var statusBySup = {};
   var detailBySup = {}; // sup -> { chave: [dia,...] }
+  var ordemBySup = {};  // sup -> { chave: { dia: ordem } } (coluna ORDEM do Detalhe)
 
   function norm(s){ return (s||"").toString().trim(); }
 
@@ -343,6 +344,7 @@
       }
 
       detailBySup = {};
+      ordemBySup = {};
       if (detailRows.length){
         var dHeader = detailRows[0];
         var dIdx = {};
@@ -359,6 +361,12 @@
           if (!detailBySup[dsup]) detailBySup[dsup] = {};
           if (!detailBySup[dsup][chave]) detailBySup[dsup][chave] = [];
           if (detailBySup[dsup][chave].indexOf(dia) === -1) detailBySup[dsup][chave].push(dia);
+          var ord = dIdx["ORDEM"] != null ? parseInt(drow[dIdx["ORDEM"]], 10) : NaN;
+          if (!isNaN(ord)){
+            if (!ordemBySup[dsup]) ordemBySup[dsup] = {};
+            if (!ordemBySup[dsup][chave]) ordemBySup[dsup][chave] = {};
+            ordemBySup[dsup][chave][dia] = ord;
+          }
         }
       }
     });
@@ -462,7 +470,17 @@
     });
     html += "</div>";
 
-    var pdvs = roster[sup] ? roster[sup].pdvs.slice() : [];
+    // só as lojas que o supervisor agendou, na ordem da 1ª visita da semana (dia, depois ordem no dia)
+    var ordSup = ordemBySup[sup] || {};
+    function chaveOrdenacao(p){
+      for (var i=0; i<DAYS.length; i++){
+        var lab = DAYS[i].label;
+        if ((det[p.chave]||[]).indexOf(lab) > -1) return i*10000 + ((ordSup[p.chave] && ordSup[p.chave][lab]) || 9999);
+      }
+      return 999999;
+    }
+    var pdvs = (roster[sup] ? roster[sup].pdvs : []).filter(function(p){ return det[p.chave] && det[p.chave].length; });
+    pdvs.sort(function(a,b){ return chaveOrdenacao(a) - chaveOrdenacao(b); });
     var byGroup = {};
     var groupOrder = [];
     pdvs.forEach(function(p){
@@ -472,11 +490,11 @@
     groupOrder.sort();
 
     if (!pdvs.length){
-      html += "<div class='empty'>Nenhum PDV cadastrado para este supervisor na base atual.</div>";
+      html += "<div class='empty'>Nenhuma loja agendada por este supervisor nesta semana.</div>";
     }
 
     groupOrder.forEach(function(cdd){
-      html += "<div class='cdd-group'><h4>"+esc(cdd)+" · "+byGroup[cdd].length+" PDVs</h4>";
+      html += "<div class='cdd-group'><h4>"+esc(cdd)+" · "+byGroup[cdd].length+" PDV"+(byGroup[cdd].length===1?"":"s")+" agendado"+(byGroup[cdd].length===1?"":"s")+"</h4>";
       byGroup[cdd].forEach(function(p){
         var diasMarcados = det[p.chave] || [];
         html += "<div class='pdv-row"+(p.destaque?" destaque":"")+"'>";
@@ -484,7 +502,8 @@
         html += "<div class='days'>";
         DAYS.forEach(function(d){
           var marcado = diasMarcados.indexOf(d.label) > -1;
-          html += "<span class='day-pill"+(marcado?"":" off")+"'>"+d.label+"</span>";
+          var n = marcado && ordSup[p.chave] ? ordSup[p.chave][d.label] : null;
+          html += "<span class='day-pill"+(marcado?"":" off")+"'"+(n?" title='"+n+"ª visita do dia'":"")+">"+d.label+(n?" · "+n:"")+"</span>";
         });
         html += "</div></div>";
       });
