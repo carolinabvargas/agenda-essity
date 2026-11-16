@@ -265,6 +265,13 @@
   .board-card .l{ font-weight:700; }
   .board-card .c{ color:var(--muted); font-size:11px; }
   .board-card.destaque{ background:var(--gold-bg); border-color:var(--gold-line); }
+  .ord-row{ display:flex; align-items:flex-start; gap:6px; }
+  .ord-n{ flex:0 0 auto; min-width:18px; height:18px; border-radius:99px; background:var(--navy); color:#fff; font-size:10.5px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; margin-top:1px; }
+  .ord-body{ flex:1 1 auto; min-width:0; }
+  .ord-moves{ flex:0 0 auto; display:flex; flex-direction:column; gap:2px; }
+  .ord-btn{ border:1px solid var(--line-soft); background:var(--surface-2); color:var(--navy); border-radius:4px; font-size:9px; line-height:1; padding:2px 4px; cursor:pointer; }
+  .ord-btn:hover:not([disabled]){ background:var(--navy); color:#fff; }
+  .ord-btn[disabled]{ opacity:.3; cursor:default; }
   .board-empty{ color:var(--muted); font-size:11.5px; text-align:center; padding:10px 0; }
   .day-clear{
     display:block; width:100%; margin-top:4px; padding:5px 0; border-radius:7px; cursor:pointer;
@@ -472,15 +479,19 @@
   var SAVED_KEY = "agessity_gravada_v1";
   var DATA_KEY = "agessity_dados_v1";
   var WEEK_KEY = "agessity_semana_local_v1";
+  var ORDER_KEY = "agessity_ordem_v1";
   var DATA_URL = "agenda_dados.csv";
   var WEEK_URL = "agenda_semana.txt";
+  var PERIOD_URL = "agenda_periodo.txt"; // data de início (domingo) da semana da agenda, yyyy-mm-dd - gravado pelo .bat
   var SYNC_URL = "https://script.google.com/macros/s/AKfycbzFjGGdoBdQc078L_Xx1WiBBS-MOqIuBNVBQHnqMqp2DA--iId1hrEnHBtDUSL3BdiztQ/exec"; // termina em /exec
   var DETAIL_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSyBjNwHY1qUDxOZFTjrr-B2rB2ON9Pq1svuqGKQDa5BDHhNmvxFbaU3PJUnBByV4HDOen3y68-m0AK/pub?gid=65432469&single=true&output=csv";
   var STATUS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSyBjNwHY1qUDxOZFTjrr-B2rB2ON9Pq1svuqGKQDa5BDHhNmvxFbaU3PJUnBByV4HDOen3y68-m0AK/pub?gid=661198088&single=true&output=csv";
 
   var rows = [];
   var WEEK_ID = ""; // semana publicada (vem de agenda_semana.txt); "" se ainda nao existir esse arquivo
+  var PERIODO_INICIO = ""; // yyyy-mm-dd (domingo) vindo de agenda_periodo.txt; "" se não houver
   var assignments = {}; // { [supervisor]: { [chave]: [dayCode, ...] } }
+  var orders = {}; // { [supervisor]: { [dayCode]: [chave, ...] } } - ordem das visitas em cada dia
   var savedState = {}; // { [supervisor]: { savedAt: 1234567890, snapshot: "{...}" } }
   var currentSup = null;
   var cddFilter = "TODOS";
@@ -571,6 +582,38 @@
   }
   function saveAssignments(){
     localStorage.setItem(STORE_KEY, JSON.stringify(assignments));
+    try { localStorage.setItem(ORDER_KEY, JSON.stringify(orders)); } catch(e){}
+  }
+  function loadOrders(){
+    try { return JSON.parse(localStorage.getItem(ORDER_KEY) || "{}"); } catch(e){ return {}; }
+  }
+
+  // Lojas marcadas no dia, na ordem da visita. A lista guardada é a fonte da ordem; lojas
+  // marcadas que ainda não estão nela (ex.: estado antigo) entram no fim, e as desmarcadas saem.
+  function dayOrder(sup, code){
+    var a = assignments[sup] || {};
+    var saved = (orders[sup] && orders[sup][code]) || [];
+    var out = saved.filter(function(c){ return a[c] && a[c].indexOf(code) > -1; });
+    Object.keys(a).forEach(function(c){
+      if (a[c].indexOf(code) > -1 && out.indexOf(c) === -1) out.push(c);
+    });
+    return out;
+  }
+  function setDayOrder(sup, code, list){
+    if (!orders[sup]) orders[sup] = {};
+    orders[sup][code] = list;
+  }
+  function visitNumber(sup, code, chave){
+    return dayOrder(sup, code).indexOf(chave) + 1;
+  }
+  function moveInDay(sup, code, chave, delta){
+    var list = dayOrder(sup, code);
+    var i = list.indexOf(chave), j = i + delta;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    var tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+    setDayOrder(sup, code, list);
+    saveAssignments();
+    renderAll();
   }
 
   function loadSavedState(){
@@ -580,11 +623,14 @@
     localStorage.setItem(SAVED_KEY, JSON.stringify(savedState));
   }
   function currentSnapshot(sup){
-    return JSON.stringify(assignments[sup] || {});
+    // inclui a ordem: reordenar também conta como alteração não gravada
+    var o = {};
+    DAYS.forEach(function(d){ var l = dayOrder(sup, d.code); if (l.length) o[d.code] = l; });
+    return JSON.stringify(assignments[sup] || {}) + "|" + JSON.stringify(o);
   }
   function hasUnsavedChanges(sup){
     var saved = savedState[sup];
-    if (!saved) return currentSnapshot(sup) !== "{}";
+    if (!saved) return Object.keys(assignments[sup] || {}).length > 0;
     return saved.snapshot !== currentSnapshot(sup);
   }
   function isLocked(sup){
@@ -597,7 +643,7 @@
     stores.forEach(function(s){
       getDays(sup, s.chave).forEach(function(d){
         var dayLabel = DAYS.filter(function(x){ return x.code===d; })[0].label;
-        entries.push({ chave: s.chave, dia: dayLabel, regional: s.cdd, loja: s.loja, cidade: s.cidade, endereco: s.endereco, promotores: s.promotores.join(" | ") });
+        entries.push({ chave: s.chave, dia: dayLabel, ordem: visitNumber(sup, d, s.chave), regional: s.cdd, loja: s.loja, cidade: s.cidade, endereco: s.endereco, promotores: s.promotores.join(" | ") });
       });
     });
     var done = stores.filter(function(s){ return getDays(sup, s.chave).length > 0; }).length;
@@ -608,7 +654,7 @@
       function pad(n){ return n<10 ? "0"+n : ""+n; }
       semana = d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
     }
-    return { supervisor: sup, semana: semana, totalPdvs: stores.length, totalAgendados: done, entries: entries };
+    return { supervisor: sup, semana: semana, inicio: PERIODO_INICIO, totalPdvs: stores.length, totalAgendados: done, entries: entries };
   }
 
   function syncToSheet(sup){
@@ -706,6 +752,7 @@
       var dSemanaIdx = idx["SEMANA"];
 
       var remoteAssign = {};
+      var remoteSeq = {}; // { dayCode: [{chave, ordem}] } - para recuperar a ordem das visitas
       for (var r=1; r<detailRows.length; r++){
         var row = detailRows[r];
         if ((row[idx["SUPERVISOR"]]||"") !== sup) continue;
@@ -715,7 +762,15 @@
         if (!chave || !dayCode) continue;
         if (!remoteAssign[chave]) remoteAssign[chave] = [];
         if (remoteAssign[chave].indexOf(dayCode) === -1) remoteAssign[chave].push(dayCode);
+        var ord = idx["ORDEM"] > -1 ? parseInt(row[idx["ORDEM"]], 10) : NaN;
+        if (!remoteSeq[dayCode]) remoteSeq[dayCode] = [];
+        remoteSeq[dayCode].push({ chave: chave, ordem: isNaN(ord) ? 9999 : ord, pos: r });
       }
+      var remoteOrders = {};
+      Object.keys(remoteSeq).forEach(function(code){
+        remoteOrders[code] = remoteSeq[code].sort(function(a,b){ return (a.ordem - b.ordem) || (a.pos - b.pos); })
+          .map(function(x){ return x.chave; });
+      });
 
       var sHeader = statusRows[0];
       var sIdx = {};
@@ -737,6 +792,7 @@
       // se a planilha nao tiver a coluna LOCKED ainda (antes da migracao), volta pro criterio antigo
       var locked = sIdx["LOCKED"]>-1 ? (lockedRaw.trim().toUpperCase() === "SIM") : (Object.keys(remoteAssign).length > 0);
       assignments[sup] = remoteAssign; // preserva o que estiver gravado, mesmo se liberado pra edicao
+      orders[sup] = remoteOrders;
       savedState[sup] = { savedAt: savedAtMs, snapshot: currentSnapshot(sup), locked: locked, syncStatus: "ok" };
       saveAssignments();
       persistSavedState();
@@ -834,8 +890,14 @@
     if (!assignments[sup]) assignments[sup] = {};
     var days = assignments[sup][chave] || [];
     var idx = days.indexOf(code);
-    if (idx > -1) { days = days.slice(0,idx).concat(days.slice(idx+1)); }
-    else { days = days.concat([code]); }
+    var list = dayOrder(sup, code);
+    if (idx > -1) {
+      days = days.slice(0,idx).concat(days.slice(idx+1));
+      setDayOrder(sup, code, list.filter(function(c){ return c !== chave; }));
+    } else {
+      days = days.concat([code]);
+      setDayOrder(sup, code, list.concat([chave])); // loja nova entra no fim da fila do dia
+    }
     if (days.length) assignments[sup][chave] = days;
     else delete assignments[sup][chave];
     saveAssignments();
@@ -1040,22 +1102,37 @@
   function renderWeekSummary(){
     if (!currentSup){ document.getElementById("weekSummary").innerHTML = ""; return; }
     var stores = applyFilters(storesForSupervisor(currentSup));
+    var byChave = {};
+    stores.forEach(function(s){ byChave[s.chave] = s; });
     var byDay = {};
-    DAYS.forEach(function(d){ byDay[d.code] = []; });
-    stores.forEach(function(s){
-      getDays(currentSup, s.chave).forEach(function(d){ byDay[d].push(s); });
+    DAYS.forEach(function(d){
+      // na ordem da visita; com filtro ativo mostra só as lojas visíveis, mas o número é o da agenda inteira
+      byDay[d.code] = dayOrder(currentSup, d.code).filter(function(c){ return byChave[c]; }).map(function(c){ return byChave[c]; });
     });
     var locked = isLocked(currentSup);
     var filtrado = stores.length !== storesForSupervisor(currentSup).length;
     document.getElementById("weekSummary").innerHTML = '<div class="board">' + DAYS.map(function(d){
       var list = byDay[d.code];
+      var total = dayOrder(currentSup, d.code).length;
       return '<div class="board-col"><h4>'+d.label+'<span class="n">'+list.length+'</span></h4>' +
         (list.length ? list.map(function(s){
-          return '<div class="board-card'+(s.destaque?" destaque":"")+'"><div class="l">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+(s.promotores.length>1?' <span title="Loja com mais de um promotor">👥</span>':"")+'</div><div class="c">'+escapeHtml(s.cidade)+' · '+escapeHtml(s.promotores.join(" | "))+'</div></div>';
+          var n = visitNumber(currentSup, d.code, s.chave);
+          var moves = locked ? '' :
+            '<span class="ord-moves">' +
+              '<button class="ord-btn" data-day="'+d.code+'" data-chave="'+escapeAttr(s.chave)+'" data-delta="-1" title="Visitar antes"'+(n<=1?' disabled':'')+'>▲</button>' +
+              '<button class="ord-btn" data-day="'+d.code+'" data-chave="'+escapeAttr(s.chave)+'" data-delta="1" title="Visitar depois"'+(n>=total?' disabled':'')+'>▼</button>' +
+            '</span>';
+          return '<div class="board-card'+(s.destaque?" destaque":"")+'"><div class="ord-row"><span class="ord-n" title="Ordem da visita no dia">'+n+'</span><div class="ord-body"><div class="l">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+(s.promotores.length>1?' <span title="Loja com mais de um promotor">👥</span>':"")+'</div><div class="c">'+escapeHtml(s.cidade)+' · '+escapeHtml(s.promotores.join(" | "))+'</div></div>'+moves+'</div></div>';
         }).join("") : '<div class="board-empty">Sem visitas</div>') +
         (list.length && !locked ? '<button class="day-clear" data-day="'+d.code+'" title="Desmarca '+d.label+' das lojas deste card">× Limpar '+d.label+'</button>' : '') +
       '</div>';
     }).join("") + '</div>';
+
+    Array.prototype.forEach.call(document.querySelectorAll("#weekSummary .ord-btn"), function(btn){
+      btn.addEventListener("click", function(){
+        moveInDay(currentSup, btn.getAttribute("data-day"), btn.getAttribute("data-chave"), parseInt(btn.getAttribute("data-delta"), 10));
+      });
+    });
 
     Array.prototype.forEach.call(document.querySelectorAll("#weekSummary .day-clear"), function(btn){
       btn.addEventListener("click", function(){
@@ -1120,9 +1197,16 @@
   }
 
   function weekLabel(){
-    if (!WEEK_ID) return "";
+    var txt = "";
+    var q = PERIODO_INICIO.split("-");
+    if (q.length === 3){
+      var d0 = new Date(+q[0], +q[1]-1, +q[2]), d1 = new Date(d0); d1.setDate(d1.getDate()+6);
+      function pad(n){ return n<10 ? "0"+n : ""+n; }
+      txt = "Agenda de " + pad(d0.getDate())+"/"+pad(d0.getMonth()+1) + " a " + pad(d1.getDate())+"/"+pad(d1.getMonth()+1) + " · ";
+    }
+    if (!WEEK_ID) return txt;
     var p = WEEK_ID.split("-");
-    return p.length === 3 ? "publicada em " + p[2] + "/" + p[1] + "/" + p[0] : WEEK_ID;
+    return txt + (p.length === 3 ? "publicada em " + p[2] + "/" + p[1] + "/" + p[0] : WEEK_ID);
   }
 
   function renderAll(){
@@ -1139,24 +1223,25 @@
 
   function buildAgendaXLS(){
     var stores = storesForSupervisor(currentSup);
-    var dayOrder = {}; DAYS.forEach(function(d,i){ dayOrder[d.code] = i; });
+    var dayIdxOf = {}; DAYS.forEach(function(d,i){ dayIdxOf[d.code] = i; });
     var entries = [];
     stores.forEach(function(s){
       var days = getDays(currentSup, s.chave);
       if (!days.length){ entries.push({s:s, dayIdx:99, dayLabel:"Não agendado"}); }
-      else { days.forEach(function(d){ entries.push({s:s, dayIdx:dayOrder[d], dayLabel: DAYS.filter(function(x){return x.code===d;})[0].label}); }); }
+      else { days.forEach(function(d){ entries.push({s:s, dayIdx:dayIdxOf[d], ordem: visitNumber(currentSup, d, s.chave), dayLabel: DAYS.filter(function(x){return x.code===d;})[0].label}); }); }
     });
     entries.sort(function(a,b){
       if (a.dayIdx !== b.dayIdx) return a.dayIdx - b.dayIdx;
+      if ((a.ordem||0) !== (b.ordem||0)) return (a.ordem||0) - (b.ordem||0);
       return a.s.loja.localeCompare(b.s.loja);
     });
-    var header = ["SUPERVISOR","DIA","REGIONAL","LOJA","CIDADE","ENDEREÇO","PROMOTORES","GOLDEN STORE"];
+    var header = ["SUPERVISOR","DIA","ORDEM","REGIONAL","LOJA","CIDADE","ENDEREÇO","PROMOTORES","GOLDEN STORE"];
     var headerRow = "<Row>" + header.map(function(h){
       return '<Cell ss:StyleID="Header"><Data ss:Type="String">'+xmlEscape(h)+'</Data></Cell>';
     }).join("") + "</Row>";
     var bodyRows = entries.map(function(e){
       var s = e.s;
-      var cells = [currentSup, e.dayLabel, s.cdd, s.loja, s.cidade, s.endereco, s.promotores.join(" | "), s.destaque ? "Sim" : ""];
+      var cells = [currentSup, e.dayLabel, e.ordem ? String(e.ordem) : "", s.cdd, s.loja, s.cidade, s.endereco, s.promotores.join(" | "), s.destaque ? "Sim" : ""];
       return "<Row>" + cells.map(function(v){
         return '<Cell><Data ss:Type="String">'+xmlEscape(v)+'</Data></Cell>';
       }).join("") + "</Row>";
@@ -1237,6 +1322,7 @@
 
   function launchApp(){
     assignments = loadAssignments();
+    orders = loadOrders();
     savedState = loadSavedState();
     resetIfNewWeek();
     currentSup = null;
@@ -1260,6 +1346,13 @@
     var weekPromise = fetch(csvUrlWithCacheBust(WEEK_URL), {cache:"no-store"}).then(function(res){
       return res.ok ? res.text() : "";
     }).catch(function(){ return ""; });
+    var periodPromise = fetch(csvUrlWithCacheBust(PERIOD_URL), {cache:"no-store"}).then(function(res){
+      return res.ok ? res.text() : "";
+    }).catch(function(){ return ""; });
+    periodPromise.then(function(t){
+      t = (t||"").trim();
+      PERIODO_INICIO = /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : "";
+    });
 
     return fetch(csvUrlWithCacheBust(DATA_URL), {cache:"no-store"}).then(function(res){
       if (!res.ok) throw new Error("http "+res.status);
@@ -1272,7 +1365,7 @@
       return weekPromise;
     }).then(function(weekText){
       WEEK_ID = (weekText||"").trim();
-      return true;
+      return periodPromise.then(function(){ return true; });
     });
   }
 
@@ -1282,6 +1375,7 @@
     try { localWeek = localStorage.getItem(WEEK_KEY); } catch(e){}
     if (localWeek === WEEK_ID) return;
     assignments = {};
+    orders = {};
     savedState = {};
     saveAssignments();
     persistSavedState();
@@ -1316,6 +1410,7 @@
         var sup = currentSup;
         var btn = document.getElementById("clearBtn");
         assignments[sup] = {};
+        orders[sup] = {};
         saveAssignments();
         savedState[sup] = { savedAt: Date.now(), snapshot: currentSnapshot(sup), locked: false, syncStatus: "sending" };
         persistSavedState();
