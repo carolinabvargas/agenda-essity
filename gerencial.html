@@ -172,9 +172,9 @@
 
   var DATA_URL = "agenda_dados.csv";
   var WEEK_URL = "agenda_semana.txt";
-  var SYNC_URL = "COLE_AQUI_URL_DO_APPS_SCRIPT"; // termina em /exec
-  var DETAIL_CSV_URL = "COLE_AQUI_CSV_PUBLICADO_ABA_DETALHE";
-  var STATUS_CSV_URL = "COLE_AQUI_CSV_PUBLICADO_ABA_STATUS";
+  var SYNC_URL = "https://script.google.com/macros/s/AKfycbzFjGGdoBdQc078L_Xx1WiBBS-MOqIuBNVBQHnqMqp2DA--iId1hrEnHBtDUSL3BdiztQ/exec"; // termina em /exec
+  var DETAIL_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSyBjNwHY1qUDxOZFTjrr-B2rB2ON9Pq1svuqGKQDa5BDHhNmvxFbaU3PJUnBByV4HDOen3y68-m0AK/pub?gid=65432469&single=true&output=csv";
+  var STATUS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSyBjNwHY1qUDxOZFTjrr-B2rB2ON9Pq1svuqGKQDa5BDHhNmvxFbaU3PJUnBByV4HDOen3y68-m0AK/pub?gid=661198088&single=true&output=csv";
 
   var DAYS = [
     {code:"SEG", label:"Seg"},
@@ -582,7 +582,7 @@
 
   function renderAll(){
     var weekLabelEl = document.getElementById("weekLabel");
-    weekLabelEl.textContent = WEEK_ID ? ("Semana publicada em "+WEEK_ID.split("-").reverse().join("/")+" · prazo de gravação: quinta-feira") : "Semana não identificada (agenda_semana.txt ausente)";
+    weekLabelEl.textContent = WEEK_ID ? ("Semana publicada em "+WEEK_ID.split("-").reverse().join("/")+" · prazo de gravação: quinta-feira, 19/11") : "Semana não identificada (agenda_semana.txt ausente)";
     renderStats();
     renderList();
     document.getElementById("lastUpdated").textContent = "Atualizado às "+formatDateTime(new Date().toISOString());
