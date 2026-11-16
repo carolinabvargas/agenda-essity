@@ -106,6 +106,7 @@
   .pdv-row.destaque{ background:var(--gold-bg); border-radius:8px; margin:0 -8px; padding:8px; border-bottom-color:var(--gold-line); }
   .pdv-row .loja{ font-weight:600; }
   .destaque-star{ color:var(--gold); font-weight:700; margin-right:4px; }
+  .fora-badge{ display:inline-block; font-size:10.5px; font-weight:800; color:#1a4fb5; background:#e8f0fe; border:1px solid #b9cdf5; padding:1px 8px; border-radius:99px; margin-left:6px; vertical-align:1px; white-space:nowrap; }
   .multi-badge{ display:inline-block; font-size:10.5px; font-weight:800; color:#fff; background:var(--pink); padding:2px 8px; border-radius:99px; margin-left:6px; vertical-align:1px; white-space:nowrap; }
   .pdv-row .meta{ color:var(--muted); font-size:12px; }
   .pdv-row .days{ display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
@@ -191,6 +192,7 @@
   var statusBySup = {};
   var detailBySup = {}; // sup -> { chave: [dia,...] }
   var ordemBySup = {};  // sup -> { chave: { dia: ordem } } (coluna ORDEM do Detalhe)
+  var foraBySup = {};   // sup -> { chave: {chave, loja, cidade, cdd} } lojas FORA do roteiro agendadas (do Detalhe)
 
   function norm(s){ return (s||"").toString().trim(); }
 
@@ -345,6 +347,7 @@
 
       detailBySup = {};
       ordemBySup = {};
+      foraBySup = {};
       if (detailRows.length){
         var dHeader = detailRows[0];
         var dIdx = {};
@@ -361,6 +364,11 @@
           if (!detailBySup[dsup]) detailBySup[dsup] = {};
           if (!detailBySup[dsup][chave]) detailBySup[dsup][chave] = [];
           if (detailBySup[dsup][chave].indexOf(dia) === -1) detailBySup[dsup][chave].push(dia);
+          if (dIdx["FORA_ROTEIRO"] != null && norm(drow[dIdx["FORA_ROTEIRO"]]).toUpperCase() === "SIM"){
+            if (!foraBySup[dsup]) foraBySup[dsup] = {};
+            foraBySup[dsup][chave] = { chave: chave, loja: norm(drow[dIdx["LOJA"]]), cidade: norm(drow[dIdx["CIDADE"]]),
+              cdd: norm(drow[dIdx["REGIONAL"]]) || "SEM REGIONAL", promotor: "", destaque: false, fora: true };
+          }
           var ord = dIdx["ORDEM"] != null ? parseInt(drow[dIdx["ORDEM"]], 10) : NaN;
           if (!isNaN(ord)){
             if (!ordemBySup[dsup]) ordemBySup[dsup] = {};
@@ -435,13 +443,15 @@
     });
 
     var pctSup = totalSup ? Math.round((gravados/totalSup)*100) : 0;
+    var foraGeral = 0;
+    Object.keys(foraBySup).forEach(function(s){ foraGeral += Object.keys(foraBySup[s]).length; });
     var pctPdv = totalPdvsGeral ? Math.round((totalAgendadosGeral/totalPdvsGeral)*100) : 0;
     var pctDestaque = destaqueTotalGeral ? Math.round((destaqueAgendadosGeral/destaqueTotalGeral)*100) : 0;
 
     var html = "";
     html += "<div class='stat-card'><div class='label'>Supervisores gravaram</div><div class='value'>"+gravados+"/"+totalSup+"</div><div class='sub'>"+pctSup+"% da equipe</div></div>";
     html += "<div class='stat-card'><div class='label'>Pendentes</div><div class='value'>"+(totalSup-gravados)+"</div><div class='sub'>ainda não gravaram esta semana</div></div>";
-    html += "<div class='stat-card'><div class='label'>PDVs agendados</div><div class='value'>"+totalAgendadosGeral+"/"+totalPdvsGeral+"</div><div class='sub'>"+pctPdv+"% da carteira total</div></div>";
+    html += "<div class='stat-card'><div class='label'>PDVs agendados</div><div class='value'>"+totalAgendadosGeral+"/"+totalPdvsGeral+"</div><div class='sub'>"+pctPdv+"% da carteira total"+(foraGeral ? " · +"+foraGeral+" fora do roteiro" : "")+"</div></div>";
     html += "<div class='stat-card gold'><div class='label'>★ Golden Store agendadas</div><div class='value'>"+destaqueAgendadosGeral+"/"+destaqueTotalGeral+"</div><div class='sub'>"+pctDestaque+"% das Golden Store</div></div>";
     document.getElementById("statsRow").innerHTML = html;
   }
@@ -480,6 +490,10 @@
       return 999999;
     }
     var pdvs = (roster[sup] ? roster[sup].pdvs : []).filter(function(p){ return det[p.chave] && det[p.chave].length; });
+    var naCarteira = {};
+    pdvs.forEach(function(p){ naCarteira[p.chave] = 1; });
+    var foraSup = foraBySup[sup] || {};
+    Object.keys(foraSup).forEach(function(c){ if (!naCarteira[c]) pdvs.push(foraSup[c]); });
     pdvs.sort(function(a,b){ return chaveOrdenacao(a) - chaveOrdenacao(b); });
     var byGroup = {};
     var groupOrder = [];
@@ -498,7 +512,7 @@
       byGroup[cdd].forEach(function(p){
         var diasMarcados = det[p.chave] || [];
         html += "<div class='pdv-row"+(p.destaque?" destaque":"")+"'>";
-        html += "<div class='info'><div class='loja'>"+(p.destaque?"<span class='destaque-star'>★</span>":"")+esc(p.loja)+(p.promotorList && p.promotorList.length>1 ? "<span class='multi-badge'>👥 "+p.promotorList.length+" promotores</span>" : "")+"</div><div class='meta'>"+esc(p.cidade)+(p.promotor?" · "+esc(p.promotor):"")+"</div></div>";
+        html += "<div class='info'><div class='loja'>"+(p.destaque?"<span class='destaque-star'>★</span>":"")+esc(p.loja)+(p.promotorList && p.promotorList.length>1 ? "<span class='multi-badge'>👥 "+p.promotorList.length+" promotores</span>" : "")+(p.fora ? "<span class='fora-badge'>Fora do roteiro</span>" : "")+"</div><div class='meta'>"+esc(p.cidade)+(p.promotor?" · "+esc(p.promotor):"")+"</div></div>";
         html += "<div class='days'>";
         DAYS.forEach(function(d){
           var marcado = diasMarcados.indexOf(d.label) > -1;
@@ -536,7 +550,8 @@
       html += "<div class='sup-head'>";
       html += "<span class='badge "+(gravado?"ok":"pending")+"'>"+(gravado?"GRAVADO":"PENDENTE")+"</span>";
       html += "<span class='name'>"+esc(sup)+"</span>";
-      html += "<span class='pct'>"+agendados+"/"+total+" PDVs ("+pct+"%)"+(st&&st.gravadoEm?" · "+formatDateTime(st.gravadoEm):"")+"</span>";
+      var nFora = Object.keys(foraBySup[sup] || {}).length;
+      html += "<span class='pct'>"+agendados+"/"+total+" PDVs ("+pct+"%)"+(nFora ? " + "+nFora+" fora do roteiro" : "")+(st&&st.gravadoEm?" · "+formatDateTime(st.gravadoEm):"")+"</span>";
       html += "<span class='chev'>›</span>";
       html += "</div>";
       html += "<div class='sup-body'></div>";

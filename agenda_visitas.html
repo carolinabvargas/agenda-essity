@@ -265,6 +265,16 @@
   .board-card .l{ font-weight:700; }
   .board-card .c{ color:var(--muted); font-size:11px; }
   .board-card.destaque{ background:var(--gold-bg); border-color:var(--gold-line); }
+  .fora-btn{ display:flex; align-items:center; gap:8px; width:100%; padding:9px 12px; border-radius:10px; border:1px dashed var(--side-line); background:transparent; color:#fff; font:inherit; font-size:13px; font-weight:700; cursor:pointer; text-align:left; }
+  .fora-btn:hover{ background:rgba(255,255,255,.06); }
+  .fora-btn.active{ background:var(--pink); border-color:var(--pink); border-style:solid; }
+  .fora-btn .fora-txt{ flex:1 1 auto; }
+  .fora-btn .fora-n{ font-size:11px; font-weight:700; background:rgba(255,255,255,.15); border-radius:99px; padding:1px 8px; }
+  .fora-badge{ display:inline-block; margin-left:6px; padding:1px 7px; border-radius:99px; background:#e8f0fe; color:#1a4fb5; border:1px solid #b9cdf5; font-size:10.5px; font-weight:700; vertical-align:middle; white-space:nowrap; }
+  .fora-search{ margin-bottom:10px; }
+  .fora-search .fora-info{ font-size:12px; color:var(--muted); margin-bottom:6px; }
+  .fora-search input{ width:100%; box-sizing:border-box; padding:9px 12px; border:1px solid var(--line-soft); border-radius:8px; font:inherit; font-size:13px; background:var(--surface-2); color:inherit; }
+  .fora-more{ text-align:center; color:var(--muted); font-size:12px; padding:10px 0; }
   .ord-row{ display:flex; align-items:flex-start; gap:6px; }
   .ord-n{ flex:0 0 auto; min-width:18px; height:18px; border-radius:99px; background:var(--navy); color:#fff; font-size:10.5px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; margin-top:1px; }
   .ord-body{ flex:1 1 auto; min-width:0; }
@@ -364,10 +374,15 @@
       <select id="supSelect"></select>
     </div>
 
+    <button class="fora-btn" id="foraBtn" type="button" style="display:none;">
+      <span class="fora-ico">📍</span><span class="fora-txt" id="foraBtnTxt">Lojas fora do roteiro</span><span class="fora-n" id="foraBtnN"></span>
+    </button>
+
     <div class="stat-block">
       <div class="stat-row"><span>PDVs na carteira</span><span class="n" id="statTotal">0</span></div>
       <div class="stat-row"><span>Agendados</span><span class="n" id="statDone">0</span></div>
       <div class="bar-row"><div class="bar"><i id="statBar" style="width:0%"></i></div><span class="bar-pct" id="statPct">0%</span></div>
+      <div class="stat-row" id="statForaRow" style="margin-top:4px;display:none;"><span>📍 Fora do roteiro agendadas</span><span class="n" id="statFora">0</span></div>
     </div>
 
     <div class="stat-block">
@@ -439,9 +454,13 @@
     </section>
 
     <section class="panel">
-      <span class="tag">PDVs da carteira</span>
+      <span class="tag" id="pdvPanelTag">PDVs da carteira</span>
       <div class="panel-body">
-        <div class="legend">
+        <div class="fora-search" id="foraSearchBox" style="display:none;">
+          <div class="fora-info">Lojas da base total <b>sem promotor</b>, nas cidades onde este supervisor já atua. Marque os dias para incluir na agenda.</div>
+          <input type="search" id="foraSearch" placeholder="Buscar por nome, endereço, bairro ou código da loja…" autocomplete="off"/>
+        </div>
+        <div class="legend" id="pdvLegend">
           <span><span class="dot"></span>bolinha no botão = dia em que o promotor visita a loja</span>
           <span><span class="multi-badge" style="margin-left:0;">👥 2 promotores</span> loja atendida por mais de um promotor</span>
           <span><span class="destaque-star">★</span>Golden Store</span>
@@ -482,6 +501,7 @@
   var ORDER_KEY = "agessity_ordem_v1";
   var DATA_URL = "agenda_dados.csv";
   var WEEK_URL = "agenda_semana.txt";
+  var FORA_URL = "lojas_fora.csv"; // lojas da base total sem promotor, nas cidades de cada supervisor - gerado pelo .bat
   var PERIOD_URL = "agenda_periodo.txt"; // data de início (domingo) da semana da agenda, yyyy-mm-dd - gravado pelo .bat
   var SYNC_URL = "https://script.google.com/macros/s/AKfycbzFjGGdoBdQc078L_Xx1WiBBS-MOqIuBNVBQHnqMqp2DA--iId1hrEnHBtDUSL3BdiztQ/exec"; // termina em /exec
   var DETAIL_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSyBjNwHY1qUDxOZFTjrr-B2rB2ON9Pq1svuqGKQDa5BDHhNmvxFbaU3PJUnBByV4HDOen3y68-m0AK/pub?gid=65432469&single=true&output=csv";
@@ -492,6 +512,10 @@
   var PERIODO_INICIO = ""; // yyyy-mm-dd (domingo) vindo de agenda_periodo.txt; "" se não houver
   var assignments = {}; // { [supervisor]: { [chave]: [dayCode, ...] } }
   var orders = {}; // { [supervisor]: { [dayCode]: [chave, ...] } } - ordem das visitas em cada dia
+  var foraBySup = {}; // { [supervisor]: [loja, ...] } - lojas fora do roteiro (sem promotor)
+  var viewFora = false; // lista central mostrando as lojas fora do roteiro em vez da carteira
+  var foraSearch = "";
+  var FORA_MAX = 200; // máximo de lojas fora do roteiro desenhadas de uma vez (o resto via busca/filtros)
   var savedState = {}; // { [supervisor]: { savedAt: 1234567890, snapshot: "{...}" } }
   var currentSup = null;
   var cddFilter = "TODOS";
@@ -577,6 +601,47 @@
     return out;
   }
 
+  function parseForaCSV(text){
+    var out = {};
+    var lines = (text||"").replace(/﻿/g,"").split(/\r?\n/).filter(function(l){ return l.trim().length; });
+    if (lines.length < 2) return out;
+    var h = lines[0].split(";");
+    var I = {};
+    ["SUPERVISOR","CHAVE","BANDEIRA","LOJA","ENDERECO","BAIRRO","CIDADE","UF","REGIONAL"].forEach(function(n){ I[n] = findCol(h, [n]); });
+    if (I.SUPERVISOR === -1 || I.CHAVE === -1) return out;
+    for (var l=1; l<lines.length; l++){
+      var c = lines[l].split(";");
+      function g(n){ return I[n] > -1 ? norm(c[I[n]]) : ""; }
+      var sup = g("SUPERVISOR"), chave = g("CHAVE");
+      if (!sup || !chave) continue;
+      if (!out[sup]) out[sup] = [];
+      out[sup].push({
+        chave: chave, cdd: g("REGIONAL") || "SEM REGIONAL", codPdv: chave,
+        loja: g("LOJA") || ("LOJA " + chave), endereco: g("ENDERECO"), cidade: g("CIDADE"),
+        bandeira: g("BANDEIRA") || "SEM BANDEIRA", bairro: g("BAIRRO") || "SEM BAIRRO", rota: "",
+        destaque: false, promotores: [], promoDet: [], promoDays: [], fora: true,
+        busca: (g("LOJA")+" "+g("ENDERECO")+" "+g("BAIRRO")+" "+g("BANDEIRA")+" "+chave).toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g,"")
+      });
+    }
+    Object.keys(out).forEach(function(s){
+      out[s].sort(function(a,b){ return a.cidade.localeCompare(b.cidade) || a.loja.localeCompare(b.loja); });
+    });
+    return out;
+  }
+  function foraStoresForSupervisor(sup){
+    // não repete loja que já está na carteira dele (segurança caso as bases mudem em datas diferentes)
+    var naCarteira = {};
+    storesForSupervisor(sup).forEach(function(s){ naCarteira[s.chave] = 1; });
+    return (foraBySup[sup] || []).filter(function(s){ return !naCarteira[s.chave]; });
+  }
+  // carteira + fora do roteiro: tudo que pode entrar na agenda
+  function allStoresForSupervisor(sup){
+    return storesForSupervisor(sup).concat(foraStoresForSupervisor(sup));
+  }
+  function foraAgendadas(sup){
+    return foraStoresForSupervisor(sup).filter(function(s){ return getDays(sup, s.chave).length > 0; });
+  }
+
   function loadAssignments(){
     try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch(e){ return {}; }
   }
@@ -640,10 +705,10 @@
   function buildSyncPayload(sup){
     var stores = storesForSupervisor(sup);
     var entries = [];
-    stores.forEach(function(s){
+    allStoresForSupervisor(sup).forEach(function(s){
       getDays(sup, s.chave).forEach(function(d){
         var dayLabel = DAYS.filter(function(x){ return x.code===d; })[0].label;
-        entries.push({ chave: s.chave, dia: dayLabel, ordem: visitNumber(sup, d, s.chave), regional: s.cdd, loja: s.loja, cidade: s.cidade, endereco: s.endereco, promotores: s.promotores.join(" | ") });
+        entries.push({ chave: s.chave, dia: dayLabel, ordem: visitNumber(sup, d, s.chave), regional: s.cdd, loja: s.loja, cidade: s.cidade, endereco: s.endereco, promotores: s.promotores.join(" | "), fora: s.fora ? "SIM" : "" });
       });
     });
     var done = stores.filter(function(s){ return getDays(sup, s.chave).length > 0; }).length;
@@ -958,8 +1023,19 @@
   function renderSidebar(){
     if (!currentSup) return;
     var stores = storesForSupervisor(currentSup);
+    var fora = foraStoresForSupervisor(currentSup);
     var total = stores.length;
     var done = stores.filter(function(s){ return getDays(currentSup, s.chave).length > 0; }).length;
+    var foraDone = foraAgendadas(currentSup).length;
+    var viewStores = viewFora ? fora : stores; // base da lista central (e dos filtros)
+
+    var foraBtn = document.getElementById("foraBtn");
+    foraBtn.style.display = (fora.length || foraDone) ? "flex" : "none";
+    foraBtn.classList.toggle("active", viewFora);
+    document.getElementById("foraBtnTxt").textContent = viewFora ? "← Voltar para a carteira" : "Lojas fora do roteiro";
+    document.getElementById("foraBtnN").textContent = viewFora ? "" : fora.length;
+    document.getElementById("statForaRow").style.display = (fora.length || foraDone) ? "flex" : "none";
+    document.getElementById("statFora").textContent = foraDone;
 
     document.getElementById("statTotal").textContent = total;
     document.getElementById("statDone").textContent = done;
@@ -991,9 +1067,9 @@
     document.getElementById("statDestaqueBar").style.width = destaquePct + "%";
     document.getElementById("statDestaquePct").textContent = destaquePct + "%";
 
-    renderFilterSelects(stores);
+    renderFilterSelects(viewStores);
 
-    var ready = done > 0;
+    var ready = (done + foraDone) > 0;
     document.getElementById("downloadBtn").disabled = !ready;
     document.getElementById("clearBtn").disabled = isLocked(currentSup);
 
@@ -1014,16 +1090,18 @@
 
     var counts = {};
     DAYS.forEach(function(d){ counts[d.code] = 0; });
-    stores.forEach(function(s){ getDays(currentSup, s.chave).forEach(function(d){ counts[d]++; }); });
+    stores.concat(fora).forEach(function(s){ getDays(currentSup, s.chave).forEach(function(d){ counts[d]++; }); });
     document.getElementById("dayMini").innerHTML = DAYS.map(function(d){
       return '<div class="d">'+d.label+'<b>'+counts[d.code]+'</b></div>';
     }).join("");
 
-    var cdds = cddsForSupervisor(currentSup);
+    var cdds = viewFora
+      ? Array.from(new Set(fora.map(function(s){ return s.cdd; }))).sort()
+      : cddsForSupervisor(currentSup);
     document.getElementById("cddFilters").innerHTML =
-      '<span class="chip-filter'+(cddFilter==="TODOS"?" active":"")+'" data-cdd="TODOS">Todos ('+total+')</span>' +
+      '<span class="chip-filter'+(cddFilter==="TODOS"?" active":"")+'" data-cdd="TODOS">Todos ('+viewStores.length+')</span>' +
       cdds.map(function(c){
-        var n = stores.filter(function(s){ return s.cdd===c; }).length;
+        var n = viewStores.filter(function(s){ return s.cdd===c; }).length;
         return '<span class="chip-filter'+(cddFilter===c?" active":"")+'" data-cdd="'+escapeAttr(c)+'">'+escapeHtml(c)+' ('+n+')</span>';
       }).join("");
 
@@ -1039,7 +1117,9 @@
   function renderTopbar(){
     document.getElementById("supName").textContent = currentSup || "—";
     var stores = currentSup ? storesForSupervisor(currentSup) : [];
-    document.getElementById("supEyebrow").textContent = stores.length + " PDV" + (stores.length===1?"":"s") + " na carteira";
+    var nf = currentSup ? foraAgendadas(currentSup).length : 0;
+    document.getElementById("supEyebrow").textContent = stores.length + " PDV" + (stores.length===1?"":"s") + " na carteira" +
+      (nf ? " · " + nf + " fora do roteiro agendada" + (nf===1?"":"s") : "");
   }
 
   function dayButtonsHtml(s){
@@ -1101,7 +1181,7 @@
 
   function renderWeekSummary(){
     if (!currentSup){ document.getElementById("weekSummary").innerHTML = ""; return; }
-    var stores = applyFilters(storesForSupervisor(currentSup));
+    var stores = applyFilters(allStoresForSupervisor(currentSup));
     var byChave = {};
     stores.forEach(function(s){ byChave[s.chave] = s; });
     var byDay = {};
@@ -1110,7 +1190,7 @@
       byDay[d.code] = dayOrder(currentSup, d.code).filter(function(c){ return byChave[c]; }).map(function(c){ return byChave[c]; });
     });
     var locked = isLocked(currentSup);
-    var filtrado = stores.length !== storesForSupervisor(currentSup).length;
+    var filtrado = stores.length !== allStoresForSupervisor(currentSup).length;
     document.getElementById("weekSummary").innerHTML = '<div class="board">' + DAYS.map(function(d){
       var list = byDay[d.code];
       var total = dayOrder(currentSup, d.code).length;
@@ -1122,7 +1202,7 @@
               '<button class="ord-btn" data-day="'+d.code+'" data-chave="'+escapeAttr(s.chave)+'" data-delta="-1" title="Visitar antes"'+(n<=1?' disabled':'')+'>▲</button>' +
               '<button class="ord-btn" data-day="'+d.code+'" data-chave="'+escapeAttr(s.chave)+'" data-delta="1" title="Visitar depois"'+(n>=total?' disabled':'')+'>▼</button>' +
             '</span>';
-          return '<div class="board-card'+(s.destaque?" destaque":"")+'"><div class="ord-row"><span class="ord-n" title="Ordem da visita no dia">'+n+'</span><div class="ord-body"><div class="l">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+(s.promotores.length>1?' <span title="Loja com mais de um promotor">👥</span>':"")+'</div><div class="c">'+escapeHtml(s.cidade)+' · '+escapeHtml(s.promotores.join(" | "))+'</div></div>'+moves+'</div></div>';
+          return '<div class="board-card'+(s.destaque?" destaque":"")+'"><div class="ord-row"><span class="ord-n" title="Ordem da visita no dia">'+n+'</span><div class="ord-body"><div class="l">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+(s.promotores.length>1?' <span title="Loja com mais de um promotor">👥</span>':"")+(s.fora?'<span class="fora-badge">Fora do roteiro</span>':"")+'</div><div class="c">'+escapeHtml(s.cidade)+(s.promotores.length?' · '+escapeHtml(s.promotores.join(" | ")):"")+'</div></div>'+moves+'</div></div>';
         }).join("") : '<div class="board-empty">Sem visitas</div>') +
         (list.length && !locked ? '<button class="day-clear" data-day="'+d.code+'" title="Desmarca '+d.label+' das lojas deste card">× Limpar '+d.label+'</button>' : '') +
       '</div>';
@@ -1151,8 +1231,20 @@
 
   function renderPdvList(){
     if (!currentSup){ document.getElementById("pdvList").innerHTML = ""; return; }
-    var stores = applyFilters(storesForSupervisor(currentSup));
-    if (!stores.length){ document.getElementById("pdvList").innerHTML = '<div class="empty-state">Nenhum PDV encontrado com esse filtro.</div>'; return; }
+    document.getElementById("pdvPanelTag").textContent = viewFora ? "Lojas fora do roteiro" : "PDVs da carteira";
+    document.getElementById("foraSearchBox").style.display = viewFora ? "block" : "none";
+    document.getElementById("pdvLegend").style.display = viewFora ? "none" : "";
+    var stores = applyFilters(viewFora ? foraStoresForSupervisor(currentSup) : storesForSupervisor(currentSup));
+    var cortadas = 0;
+    if (viewFora){
+      var termos = foraSearch.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g,"").split(/\s+/).filter(Boolean);
+      if (termos.length) stores = stores.filter(function(s){ return termos.every(function(t){ return s.busca.indexOf(t) > -1; }); });
+      // agendadas primeiro, para não "sumirem" no meio da lista
+      stores = stores.filter(function(s){ return getDays(currentSup, s.chave).length; })
+        .concat(stores.filter(function(s){ return !getDays(currentSup, s.chave).length; }));
+      if (stores.length > FORA_MAX){ cortadas = stores.length - FORA_MAX; stores = stores.slice(0, FORA_MAX); }
+    }
+    if (!stores.length){ document.getElementById("pdvList").innerHTML = '<div class="empty-state">Nenhum PDV encontrado com esse filtro'+(viewFora && foraSearch ? ' / busca' : '')+'.</div>'; return; }
 
     var groups = {};
     var order = [];
@@ -1172,8 +1264,9 @@
             (hasDays && !locked ? '<button class="remove-x" data-chave="'+escapeAttr(s.chave)+'" title="Remover esta loja da semana">×</button>' : "") +
             '<div class="info">' +
               '<div class="loja">'+(s.destaque?'<span class="destaque-star">★</span>':"")+escapeHtml(s.loja)+
-                (multi ? '<span class="multi-badge">👥 '+s.promotores.length+' promotores</span>' : "")+'</div>' +
-              '<div class="meta">'+escapeHtml(s.cidade)+(s.bairro && s.bairro !== "SEM BAIRRO" ? '<span class="sep">·</span>'+escapeHtml(s.bairro) : "")+(s.endereco && s.loja.indexOf(s.endereco) === -1 ? '<span class="sep">·</span>'+escapeHtml(s.endereco) : "")+'</div>' +
+                (multi ? '<span class="multi-badge">👥 '+s.promotores.length+' promotores</span>' : "")+
+                (s.fora ? '<span class="fora-badge">Fora do roteiro</span>' : "")+'</div>' +
+              '<div class="meta">'+(s.fora ? 'Cód. '+escapeHtml(s.chave)+'<span class="sep">·</span>' : '')+escapeHtml(s.cidade)+(s.bairro && s.bairro !== "SEM BAIRRO" ? '<span class="sep">·</span>'+escapeHtml(s.bairro) : "")+(s.endereco && s.loja.indexOf(s.endereco) === -1 ? '<span class="sep">·</span>'+escapeHtml(s.endereco) : "")+'</div>' +
               promotoresHtml(s) +
             '</div>' +
             dayButtonsHtml(s) +
@@ -1181,6 +1274,7 @@
         }).join("");
     }).join("");
 
+    if (cortadas) html += '<div class="fora-more">Mostrando '+FORA_MAX+' lojas — mais '+cortadas+' não exibidas. Use a busca ou os filtros de cidade/bairro para encontrar a loja.</div>';
     document.getElementById("pdvList").innerHTML = html;
 
     Array.prototype.forEach.call(document.querySelectorAll("#pdvList .day-btn"), function(btn){
@@ -1222,7 +1316,8 @@
   function xmlEscape(s){ return (s||"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
   function buildAgendaXLS(){
-    var stores = storesForSupervisor(currentSup);
+    // carteira inteira (inclusive não agendadas) + só as fora do roteiro que foram agendadas
+    var stores = storesForSupervisor(currentSup).concat(foraAgendadas(currentSup));
     var dayIdxOf = {}; DAYS.forEach(function(d,i){ dayIdxOf[d.code] = i; });
     var entries = [];
     stores.forEach(function(s){
@@ -1235,13 +1330,13 @@
       if ((a.ordem||0) !== (b.ordem||0)) return (a.ordem||0) - (b.ordem||0);
       return a.s.loja.localeCompare(b.s.loja);
     });
-    var header = ["SUPERVISOR","DIA","ORDEM","REGIONAL","LOJA","CIDADE","ENDEREÇO","PROMOTORES","GOLDEN STORE"];
+    var header = ["SUPERVISOR","DIA","ORDEM","REGIONAL","LOJA","CIDADE","ENDEREÇO","PROMOTORES","GOLDEN STORE","FORA DO ROTEIRO"];
     var headerRow = "<Row>" + header.map(function(h){
       return '<Cell ss:StyleID="Header"><Data ss:Type="String">'+xmlEscape(h)+'</Data></Cell>';
     }).join("") + "</Row>";
     var bodyRows = entries.map(function(e){
       var s = e.s;
-      var cells = [currentSup, e.dayLabel, e.ordem ? String(e.ordem) : "", s.cdd, s.loja, s.cidade, s.endereco, s.promotores.join(" | "), s.destaque ? "Sim" : ""];
+      var cells = [currentSup, e.dayLabel, e.ordem ? String(e.ordem) : "", s.cdd, s.loja, s.cidade, s.endereco, s.promotores.join(" | "), s.destaque ? "Sim" : "", s.fora ? "Sim" : ""];
       return "<Row>" + cells.map(function(v){
         return '<Cell><Data ss:Type="String">'+xmlEscape(v)+'</Data></Cell>';
       }).join("") + "</Row>";
@@ -1349,6 +1444,10 @@
     var periodPromise = fetch(csvUrlWithCacheBust(PERIOD_URL), {cache:"no-store"}).then(function(res){
       return res.ok ? res.text() : "";
     }).catch(function(){ return ""; });
+    // opcional: se lojas_fora.csv não existir, o botão simplesmente não aparece
+    var foraPromise = fetch(csvUrlWithCacheBust(FORA_URL), {cache:"no-store"}).then(function(res){
+      return res.ok ? res.text() : "";
+    }).catch(function(){ return ""; }).then(function(t){ foraBySup = parseForaCSV(t); });
     periodPromise.then(function(t){
       t = (t||"").trim();
       PERIODO_INICIO = /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : "";
@@ -1365,7 +1464,7 @@
       return weekPromise;
     }).then(function(weekText){
       WEEK_ID = (weekText||"").trim();
-      return periodPromise.then(function(){ return true; });
+      return Promise.all([periodPromise, foraPromise]).then(function(){ return true; });
     });
   }
 
@@ -1386,8 +1485,21 @@
     document.getElementById("supSelect").addEventListener("change", function(e){
       currentSup = e.target.value;
       cddFilter = "TODOS"; resetFilters(0);
+      viewFora = false; foraSearch = ""; document.getElementById("foraSearch").value = "";
       renderAll();
       syncFromRemoteAndRender(currentSup);
+    });
+
+    document.getElementById("foraBtn").addEventListener("click", function(){
+      viewFora = !viewFora;
+      cddFilter = "TODOS"; resetFilters(0);
+      renderAll();
+      if (viewFora) document.getElementById("foraSearch").focus();
+    });
+    var searchTimer = null;
+    document.getElementById("foraSearch").addEventListener("input", function(e){
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function(){ foraSearch = e.target.value.trim(); renderPdvList(); }, 200);
     });
 
     document.getElementById("downloadBtn").addEventListener("click", function(e){
@@ -1403,7 +1515,7 @@
 
     document.getElementById("clearBtn").addEventListener("click", function(){
       if (!currentSup || isLocked(currentSup)) return;
-      var stores = storesForSupervisor(currentSup);
+      var stores = allStoresForSupervisor(currentSup);
       var doneCount = stores.filter(function(s){ return getDays(currentSup, s.chave).length > 0; }).length;
       if (doneCount === 0) return;
       showConfirm("Isso apaga "+doneCount+" loja"+(doneCount===1?"":"s")+" marcada"+(doneCount===1?"":"s")+" para "+currentSup+" nesta semana e já atualiza a planilha do gestor para 0 agendados. Não dá pra desfazer.", function(){
